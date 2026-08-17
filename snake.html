@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Snake</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e1e2e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Snake">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #1e1e2e;
+    font-family: 'Segoe UI', sans-serif;
+    color: #f5f5f5;
+    gap: 12px;
+  }
+  h1 { margin: 0; font-size: 1.5rem; letter-spacing: 2px; }
+  #scoreboard {
+    display: flex;
+    gap: 20px;
+    font-size: 1.1rem;
+  }
+  #best { color: #f9e2af; }
+  #best.new-record { animation: pulse 0.6s ease-in-out 2; }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+  }
+  canvas {
+    background: #11111b;
+    border: 4px solid #89b4fa;
+    border-radius: 8px;
+  }
+  #msg {
+    min-height: 24px;
+    color: #f38ba8;
+    font-weight: bold;
+  }
+  #controls {
+    display: grid;
+    grid-template-columns: repeat(3, 50px);
+    grid-template-rows: repeat(2, 50px);
+    gap: 6px;
+    margin-top: 8px;
+  }
+  #controls button {
+    background: #313244;
+    color: #f5f5f5;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    cursor: pointer;
+  }
+  #controls button:active { background: #89b4fa; }
+  #up { grid-column: 2; grid-row: 1; }
+  #left { grid-column: 1; grid-row: 2; }
+  #down { grid-column: 2; grid-row: 2; }
+  #right { grid-column: 3; grid-row: 2; }
+  #restart {
+    padding: 8px 20px;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    background: #a6e3a1;
+    cursor: pointer;
+    display: none;
+  }
+  #muteBtn {
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    border: none;
+    border-radius: 8px;
+    background: #313244;
+    color: #f5f5f5;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  #installBtn {
+    padding: 6px 14px;
+    font-size: 0.9rem;
+    border: none;
+    border-radius: 8px;
+    background: #89b4fa;
+    color: #1e1e2e;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <h1>🐍 SNAKE</h1>
+  <div id="scoreboard">
+    <span id="score">Pontos: 0</span>
+    <span id="best">🏆 Recorde: 0</span>
+  </div>
+  <canvas id="game" width="400" height="400"></canvas>
+  <div id="msg"></div>
+  <button id="restart">Jogar novamente</button>
+  <div id="controls">
+    <button id="up">↑</button>
+    <button id="left">←</button>
+    <button id="down">↓</button>
+    <button id="right">→</button>
+  </div>
+  <button id="muteBtn">🔊 Som</button>
+  <button id="installBtn" style="display:none;">📲 Instalar app</button>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const box = 20;
+const cols = canvas.width / box;
+const rows = canvas.height / box;
+const scoreEl = document.getElementById('score');
+const bestEl = document.getElementById('best');
+const msgEl = document.getElementById('msg');
+const restartBtn = document.getElementById('restart');
+const muteBtn = document.getElementById('muteBtn');
+
+// ---- Recorde (salvo no navegador via localStorage) ----
+const BEST_KEY = 'snake_best_score';
+let bestScore = Number(localStorage.getItem(BEST_KEY)) || 0;
+bestEl.textContent = '🏆 Recorde: ' + bestScore;
+
+function checkAndSaveRecord() {
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem(BEST_KEY, String(bestScore));
+    bestEl.textContent = '🏆 Recorde: ' + bestScore;
+    bestEl.classList.remove('new-record');
+    void bestEl.offsetWidth; // reinicia a animação
+    bestEl.classList.add('new-record');
+    return true;
+  }
+  return false;
+}
+
+// ---- Som (gerado via Web Audio API, sem arquivos externos) ----
+let audioCtx = null;
+let muted = false;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone({ freq, duration, type = 'square', volume = 0.15, slideTo = null, delay = 0 }) {
+  if (muted) return;
+  const ctx2 = getAudioCtx();
+  const osc = ctx2.createOscillator();
+  const gain = ctx2.createGain();
+  osc.type = type;
+  const startTime = ctx2.currentTime + delay;
+  osc.frequency.setValueAtTime(freq, startTime);
+  if (slideTo) {
+    osc.frequency.exponentialRampToValueAtTime(slideTo, startTime + duration);
+  }
+  gain.gain.setValueAtTime(volume, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  osc.connect(gain).connect(ctx2.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration);
+}
+
+function soundEat() {
+  playTone({ freq: 520, duration: 0.09, type: 'square', volume: 0.18 });
+  playTone({ freq: 780, duration: 0.09, type: 'square', volume: 0.14, delay: 0.06 });
+}
+
+function soundTurn() {
+  playTone({ freq: 220, duration: 0.03, type: 'square', volume: 0.05 });
+}
+
+function soundGameOver() {
+  playTone({ freq: 300, duration: 0.5, type: 'sawtooth', volume: 0.16, slideTo: 60 });
+}
+
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇 Mudo' : '🔊 Som';
+  if (!muted) getAudioCtx();
+});
+
+let snake, prevSnake, direction, inputQueue, food, score, gameOver, rafId;
+let stepMs = 100;       // duração de cada passo lógico (menor = cobra mais rápida)
+let accumulator = 0;
+let lastTime = 0;
+let grew = false;
+
+function randomFood() {
+  let pos;
+  do {
+    pos = {
+      x: Math.floor(Math.random() * cols),
+      y: Math.floor(Math.random() * rows)
+    };
+  } while (snake.some(s => s.x === pos.x && s.y === pos.y));
+  return pos;
+}
+
+function init() {
+  snake = [{x: 8, y: 10}, {x: 7, y: 10}, {x: 6, y: 10}];
+  prevSnake = snake.map(s => ({...s}));
+  direction = 'RIGHT';
+  inputQueue = [];
+  score = 0;
+  gameOver = false;
+  grew = false;
+  accumulator = 0;
+  lastTime = 0;
+  food = randomFood();
+  scoreEl.textContent = 'Pontos: 0';
+  msgEl.textContent = '';
+  restartBtn.style.display = 'none';
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+// Loop principal a 60fps (via requestAnimationFrame), com passo lógico fixo
+// e interpolação visual entre passos para movimento suave.
+function gameLoop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const delta = timestamp - lastTime;
+  lastTime = timestamp;
+
+  if (!gameOver) {
+    accumulator += delta;
+    while (accumulator >= stepMs) {
+      step();
+      accumulator -= stepMs;
+    }
+    const t = accumulator / stepMs; // fator de interpolação (0 a 1)
+    draw(t);
+  }
+
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+function step() {
+  // Consome o próximo input válido da fila (permite curvas rápidas sem perder cliques)
+  while (inputQueue.length) {
+    const dir = inputQueue.shift();
+    if (opposite[dir] !== direction) {
+      direction = dir;
+      break;
+    }
+  }
+
+  prevSnake = snake.map(s => ({...s}));
+
+  const head = {...snake[0]};
+  if (direction === 'UP') head.y--;
+  if (direction === 'DOWN') head.y++;
+  if (direction === 'LEFT') head.x--;
+  if (direction === 'RIGHT') head.x++;
+
+  if (
+    head.x < 0 || head.x >= cols ||
+    head.y < 0 || head.y >= rows ||
+    snake.some(s => s.x === head.x && s.y === head.y)
+  ) {
+    endGame();
+    return;
+  }
+
+  snake.unshift(head);
+
+  if (head.x === food.x && head.y === food.y) {
+    score += 10;
+    scoreEl.textContent = 'Pontos: ' + score;
+    food = randomFood();
+    grew = true;
+    soundEat();
+    checkAndSaveRecord();
+  } else {
+    snake.pop();
+    grew = false;
+  }
+}
+
+function draw(t) {
+  ctx.fillStyle = '#11111b';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#f38ba8';
+  ctx.fillRect(food.x * box, food.y * box, box, box);
+
+  const len = snake.length;
+  for (let i = 0; i < len; i++) {
+    const curr = snake[i];
+    // ao crescer, o corpo "prev" tem um segmento a menos: reaproveita o último para o extra
+    const prev = prevSnake[i] || prevSnake[prevSnake.length - 1] || curr;
+    const x = (prev.x + (curr.x - prev.x) * t) * box;
+    const y = (prev.y + (curr.y - prev.y) * t) * box;
+    ctx.fillStyle = i === 0 ? '#a6e3a1' : '#89b4fa';
+    ctx.fillRect(x + 1, y + 1, box - 2, box - 2);
+  }
+}
+
+function endGame() {
+  gameOver = true;
+  soundGameOver();
+  const isRecord = score > 0 && score === bestScore;
+  msgEl.textContent = isRecord
+    ? '🎉 Novo recorde! Pontuação final: ' + score
+    : 'Fim de jogo! Pontuação final: ' + score;
+  restartBtn.style.display = 'inline-block';
+}
+
+const keyMap = {
+  ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
+  w: 'UP', s: 'DOWN', a: 'LEFT', d: 'RIGHT'
+};
+const opposite = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' };
+
+function changeDirection(dir) {
+  if (!dir) return;
+  const last = inputQueue.length ? inputQueue[inputQueue.length - 1] : direction;
+  if (opposite[dir] !== last && dir !== last && inputQueue.length < 2) {
+    inputQueue.push(dir);
+    soundTurn();
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  const dir = keyMap[e.key];
+  if (dir) {
+    e.preventDefault();
+    changeDirection(dir);
+  }
+});
+
+document.getElementById('up').addEventListener('click', () => changeDirection('UP'));
+document.getElementById('down').addEventListener('click', () => changeDirection('DOWN'));
+document.getElementById('left').addEventListener('click', () => changeDirection('LEFT'));
+document.getElementById('right').addEventListener('click', () => changeDirection('RIGHT'));
+restartBtn.addEventListener('click', init);
+
+init();
+
+// ---- PWA: registra o service worker (cache offline) ----
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  });
+}
+
+// ---- PWA: botão de instalação no Android/Chrome ----
+const installBtn = document.getElementById('installBtn');
+let deferredPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  installBtn.style.display = 'inline-block';
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  installBtn.style.display = 'none';
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null;
+});
+
+window.addEventListener('appinstalled', () => {
+  installBtn.style.display = 'none';
+});
+
+</script>
+</body>
+</html>
